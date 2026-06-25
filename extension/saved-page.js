@@ -244,7 +244,7 @@
         });
     }
 
-    // ── Main: Process Selected ──
+    // ── Main: Process Selected (Concurrent Batch) ──
     async function processSelected() {
         if (processingActive) return;
         const items = getSelectedItems();
@@ -266,23 +266,38 @@
         let failCount = 0;
         const total = items.length;
 
-        // Keep service worker alive during long batch processing (Gemini API can take >30s)
+        const updateProgress = () => {
+            if (progressText) progressText.textContent = `Processing ${doneCount} of ${total}…`;
+            if (progressFill) progressFill.style.width = `${Math.round((doneCount / total) * 100)}%`;
+        };
+        updateProgress();
+
+        // Keep service worker alive during long batch processing
         const keepAliveInterval = setInterval(() => {
             chrome.runtime.sendMessage({ action: 'ping' }, () => {
                 if (chrome.runtime.lastError) { /* ignore */ }
             });
         }, 10000);
 
-        for (const item of items) {
-            if (progressText) progressText.textContent = `Processing ${doneCount + 1} of ${total}…`;
-            if (progressFill) progressFill.style.width = `${Math.round((doneCount / total) * 100)}%`;
+        // Queue for executing UI automation sequentially while network tasks run concurrently
+        let unsaveQueue = Promise.resolve();
+        const queueUnsave = (shortcode) => {
+            unsaveQueue = unsaveQueue.then(async () => {
+                try {
+                    console.log(`[Gemini Saved] Auto-unsaving ${shortcode}...`);
+                    await unsavePost(shortcode);
+                } catch (e) {
+                    console.error(`[Gemini Saved] Failed to unsave ${shortcode}:`, e);
+                }
+            });
+        };
 
+        const processItem = async (item) => {
             let videoUrl = null;
             let imageUrls = null;
 
             try {
                 if (item.postType === 'Carousel') {
-                    console.log(`[Gemini Saved] Fetching embed page for carousel: ${item.shortcode}`);
                     const res = await fetch(`https://www.instagram.com/p/${item.shortcode}/embed/captioned/`);
                     if (res.ok) {
                         const embedHtml = await res.text();
@@ -292,10 +307,8 @@
                             const url = m[1].replace(/&amp;/g, '&');
                             if (!imageUrls.includes(url)) imageUrls.push(url);
                         }
-                        console.log(`[Gemini Saved] Found ${imageUrls.length} images for carousel: ${item.shortcode}`);
                     }
                 } else {
-                    console.log(`[Gemini Saved] Attempting to fetch video URL from reel page HTML: ${item.shortcode}`);
                     try {
                         const pageRes = await fetch(`https://www.instagram.com/reel/${item.shortcode}/`);
                         if (pageRes.ok) {
@@ -303,7 +316,6 @@
                             const match = pageHtml.match(/"video_url":"(https:\/\/[^"]+)"/);
                             if (match) {
                                 videoUrl = JSON.parse('"' + match[1] + '"');
-                                console.log(`[Gemini Saved] Successfully extracted videoUrl from reel HTML for ${item.shortcode}`);
                             }
                         }
                     } catch (e) {
@@ -311,15 +323,11 @@
                     }
 
                     if (!videoUrl) {
-                        console.log(`[Gemini Saved] Requesting background tab capture for video: ${item.shortcode}`);
                         const captureRes = await new Promise(resolve => {
                             chrome.runtime.sendMessage({ action: 'openAndCaptureVideo', shortcode: item.shortcode }, resolve);
                         });
                         if (captureRes && captureRes.success) {
                             videoUrl = captureRes.videoUrl;
-                            console.log(`[Gemini Saved] Successfully captured videoUrl via background tab for ${item.shortcode}`);
-                        } else {
-                            console.warn(`[Gemini Saved] Background capture failed for ${item.shortcode}:`, captureRes?.error);
                         }
                     }
                 }
@@ -337,36 +345,48 @@
                     postType: item.postType
                 });
 
-                // Wait for the background task to update the storage status
                 await waitForProcessing(item.shortcode);
-
                 markPostDone(item.shortcode, 'success');
                 successCount++;
 
                 if (autoUnsaveEnabled) {
-                    try {
-                        console.log(`[Gemini Saved] Auto-unsaving ${item.shortcode}...`);
-                        await unsavePost(item.shortcode);
-                    } catch (e) {
-                        console.error(`[Gemini Saved] Failed to unsave ${item.shortcode}:`, e);
-                    }
+                    queueUnsave(item.shortcode);
                 }
             } catch (err) {
                 console.error(`[Gemini Batch] Error processing ${item.shortcode}:`, err);
                 markPostDone(item.shortcode, 'error', err.message);
                 failCount++;
             } finally {
-                // Clean up status key from local storage
                 chrome.storage.local.remove([`status_${item.shortcode}`]);
+                doneCount++;
+                updateProgress();
             }
+        };
 
-            doneCount++;
+        // Concurrency Pool Setup
+        const maxConcurrency = 3;
+        const executing = new Set();
+        const results = [];
+        
+        for (const item of items) {
+            const p = Promise.resolve().then(() => processItem(item));
+            results.push(p);
+            executing.add(p);
+            const clean = () => executing.delete(p);
+            p.then(clean).catch(clean);
+            if (executing.size >= maxConcurrency) {
+                await Promise.race(executing);
+            }
         }
+        await Promise.all(results);
+
+        // Wait for all UI automation (unsaving) to finish before concluding
+        await unsaveQueue;
 
         // Final state
         if (progressFill) progressFill.style.width = '100%';
         if (progressText) {
-            progressText.textContent = `✅ Done! ${successCount} processed${failCount > 0 ? `, ${failCount} failed` : ''} — check dashboard`;
+            progressText.textContent = `✅ Done! ${successCount} processed${failCount > 0 ? `, ${failCount} failed` : ''}`;
         }
 
         clearInterval(keepAliveInterval);
@@ -414,7 +434,7 @@
         const removeBtn = await new Promise(resolve => {
             let attempts = 0;
             const interval = setInterval(() => {
-                const btn = document.querySelector('svg[aria-label="Remove"]');
+                const btn = document.querySelector('svg[aria-label="Remove"], svg[aria-label="Unsave"]');
                 if (btn || attempts > 30) { // 3 seconds timeout
                     clearInterval(interval);
                     resolve(btn);
@@ -425,20 +445,20 @@
 
         // 3. Click the Remove button if found
         if (removeBtn) {
-            const clickable = removeBtn.closest('[role="button"]') || removeBtn.closest('button');
+            const clickable = removeBtn.closest('[role="button"]') || removeBtn.closest('button') || removeBtn.parentElement;
             if (clickable) {
                 clickable.click();
                 console.log(`[Gemini Saved] Clicked unsave button for ${shortcode}`);
             }
         } else {
-            console.warn(`[Gemini Saved] Could not find 'Remove' button for ${shortcode}`);
+            console.warn(`[Gemini Saved] Could not find 'Remove'/'Unsave' button for ${shortcode}`);
         }
         
         // Brief delay to allow unsave request to fire
         await new Promise(r => setTimeout(r, 400));
 
         // 4. Close the modal
-        const closeBtn = document.querySelector('svg[aria-label="Close"]');
+        const closeBtn = document.querySelector('svg[aria-label="Close"], svg[aria-label="Close modal"]');
         if (closeBtn) {
             const cb = closeBtn.closest('[role="button"]') || closeBtn.closest('button') || closeBtn.closest('.x1i10hfl');
             if (cb) cb.click();
