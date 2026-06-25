@@ -14,6 +14,8 @@ async function getConfig() {
     });
 }
 
+const pendingCaptures = new Map();
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.action === 'analyzeUrl') {
         handleAnalyzeUrl(message, sendResponse);
@@ -23,7 +25,53 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         handleAnalyzeFile(message, sendResponse);
         return true;
     }
+    if (message.action === 'videoCaptured') {
+        const { shortcode, videoUrl } = message;
+        if (shortcode && pendingCaptures.has(shortcode)) {
+            console.log(`[BG] Resolving pending capture for ${shortcode}`);
+            pendingCaptures.get(shortcode).resolve(videoUrl);
+        }
+    }
+    if (message.action === 'openAndCaptureVideo') {
+        captureVideoUrl(message.shortcode)
+            .then(videoUrl => sendResponse({ success: true, videoUrl }))
+            .catch(error => sendResponse({ success: false, error: error.message }));
+        return true;
+    }
 });
+
+async function captureVideoUrl(shortcode) {
+    return new Promise((resolve, reject) => {
+        let timeoutId;
+        let targetTabId;
+
+        const cleanup = () => {
+            clearTimeout(timeoutId);
+            pendingCaptures.delete(shortcode);
+            if (targetTabId) {
+                chrome.tabs.remove(targetTabId).catch(() => {});
+            }
+        };
+
+        const onCaptured = (videoUrl) => {
+            cleanup();
+            resolve(videoUrl);
+        };
+
+        pendingCaptures.set(shortcode, { resolve: onCaptured, reject });
+
+        // Timeout after 10 seconds
+        timeoutId = setTimeout(() => {
+            cleanup();
+            reject(new Error(`Timeout waiting for video URL for ${shortcode}`));
+        }, 10000);
+
+        // Open reel in a background tab
+        chrome.tabs.create({ url: `https://www.instagram.com/reel/${shortcode}/`, active: false }, (tab) => {
+            targetTabId = tab.id;
+        });
+    });
+}
 
 async function handleAnalyzeUrl(message, sendResponse) {
     try {
@@ -45,15 +93,24 @@ async function handleAnalyzeUrl(message, sendResponse) {
             headers['x-gemini-api-key'] = config.apiKey;
         }
 
-        console.log('[BG] Sending to backend. videoUrl:', message.videoUrl ? message.videoUrl.substring(0,60)+'...' : 'null', '| shortcode:', message.shortcode, '| vertex:', config.useVertex);
-        const response = await fetch(`${config.backendUrl}/api/analyze-remote-video`, {
+        const videoUrl = message.videoUrl || null;
+        const imageUrls = message.imageUrls || null;
+        const shortcode = message.shortcode;
+        const postType = message.postType || 'Clip';
+
+        let endpoint = '/api/analyze-remote-video';
+        let requestBody = { videoUrl, caption: message.caption, shortcode };
+
+        if (postType === 'Carousel') {
+            endpoint = '/api/analyze-carousel';
+            requestBody = { imageUrls, caption: message.caption, shortcode };
+        }
+
+        console.log(`[BG] Routing to ${endpoint}. shortcode: ${shortcode}`);
+        const response = await fetch(`${config.backendUrl}${endpoint}`, {
             method: 'POST',
             headers,
-            body: JSON.stringify({
-                videoUrl: message.videoUrl || null,
-                caption: message.caption,
-                shortcode: message.shortcode
-            })
+            body: JSON.stringify(requestBody)
         });
 
         const result = await response.json();

@@ -83,10 +83,11 @@ Your task is to extract all the key informational points mentioned in the video.
 Typically, these videos list things like "Top 10 projects to build", "Best 5 certifications", "Tools you need to know", or "GitHub repositories that do X".
 
 Please provide a highly structured Markdown response that includes:
-1. **Summary:** A 1-2 sentence summary of what this video is about.
-2. **Key Items:** A structured list (using bullet points or numbered lists) of the exact items mentioned (projects, tools, certifications, repos). For each item, include any context or details provided in the video.
-3. **Links & Repos:** If any websites, GitHub repos, or specific search terms are mentioned, list them clearly.
-4. **Actionable Steps:** If the video provides a tutorial or steps, list them chronologically.
+1. **Title:** A catchy, relevant, and short title as a level 1 heading (e.g. \`# 5 Web Dev Tools\`). It MUST be the very first line.
+2. **Summary:** A 1-2 sentence summary of what this video is about.
+3. **Key Items:** A structured list (using bullet points or numbered lists) of the exact items mentioned (projects, tools, certifications, repos). For each item, include any context or details provided in the video.
+4. **Links & Repos:** If any websites, GitHub repos, or specific search terms are mentioned, list them clearly.
+5. **Actionable Steps:** If the video provides a tutorial or steps, list them chronologically.
 
 Only output the markdown. Make it beautiful, clean, and easy to read.`;
 
@@ -162,6 +163,12 @@ Only output the markdown. Make it beautiful, clean, and easy to read.`;
 
     const markdownResult = response.text;
     
+    let generatedTitle = originalFilename;
+    const titleMatch = markdownResult.match(/^#\s+(.+)$/m);
+    if (titleMatch) {
+        generatedTitle = titleMatch[1].trim();
+    }
+    
     // Clean up the local uploaded file
     await fs.unlink(filePath).catch(console.error);
 
@@ -170,7 +177,7 @@ Only output the markdown. Make it beautiful, clean, and easy to read.`;
     const newInsight = {
         id: insightId,
         timestamp: new Date().toISOString(),
-        originalFilename: originalFilename,
+        originalFilename: generatedTitle,
         markdown: markdownResult
     };
 
@@ -303,13 +310,248 @@ app.post('/api/analyze-remote-video', async (req, res) => {
     }
 });
 
+// API Endpoint: Analyze Carousel (image posts) — fetches images from embed page
+app.post('/api/analyze-carousel', async (req, res) => {
+    console.log('--> POST /api/analyze-carousel hit');
+    try {
+        const apiKey = req.headers['x-gemini-api-key'] || '';
+        const useVertex = req.headers['x-use-vertex'] === 'true';
+        if (!apiKey && !useVertex) {
+            return res.status(401).json({ error: 'Missing Gemini API Key.' });
+        }
+
+        let { shortcode, caption, imageUrls } = req.body;
+        if (!shortcode) return res.status(400).json({ error: 'No shortcode provided.' });
+
+        // Initialize Gemini client
+        let ai;
+        if (useVertex) {
+            ai = new GoogleGenAI({
+                vertexai: true,
+                project: req.headers['x-vertex-project'] || 'smart-seat-m8ttk',
+                location: req.headers['x-vertex-location'] || 'us-central1'
+            });
+        } else {
+            ai = new GoogleGenAI({ apiKey });
+        }
+
+        if (!imageUrls || imageUrls.length === 0) {
+            // Fetch the embed page to extract carousel image URLs
+            console.log(`[Carousel] Fetching embed page for shortcode: ${shortcode}`);
+            const embedRes = await fetch(`https://www.instagram.com/p/${shortcode}/embed/captioned/`, {
+                headers: {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                    'Accept-Language': 'en-US,en;q=0.9',
+                }
+            });
+            const embedHtml = await embedRes.text();
+
+            // Extract all image URLs from the embed HTML
+            imageUrls = [];
+            const imgMatches = [...embedHtml.matchAll(/(?:src|data-src)="(https:\/\/(?:scontent[^"]+\.(?:jpg|jpeg|png|webp))[^"]*)"/g)];
+            for (const m of imgMatches) {
+                const url = m[1].replace(/&amp;/g, '&');
+                if (!imageUrls.includes(url)) imageUrls.push(url);
+            }
+        }
+
+        if (!imageUrls || imageUrls.length === 0) {
+            return res.status(400).json({ error: 'Could not find any images in this carousel post.' });
+        }
+
+        console.log(`[Carousel] Processing ${imageUrls.length} images for ${shortcode}`);
+
+        // Download images and convert to base64 inline parts
+        const imageParts = [];
+        for (const url of imageUrls.slice(0, 10)) { // max 10 images
+            try {
+                const imgRes = await fetch(url, {
+                    headers: {
+                        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+                        'Referer': 'https://www.instagram.com/',
+                    }
+                });
+                if (!imgRes.ok) continue;
+                const buf = Buffer.from(await imgRes.arrayBuffer());
+                imageParts.push({
+                    inlineData: {
+                        mimeType: 'image/jpeg',
+                        data: buf.toString('base64')
+                    }
+                });
+            } catch (e) {
+                console.warn(`[Carousel] Failed to download image: ${url}`, e.message);
+            }
+        }
+
+        if (imageParts.length === 0) {
+            return res.status(400).json({ error: 'Failed to download carousel images.' });
+        }
+
+        let prompt = `You are an expert content analyzer. I am providing you with images from an Instagram carousel post (multiple slides).
+Your task is to extract all the key informational points shown across all the slides.
+Typically these carousel posts list things like "Top 10 tools", "Best practices", "Step-by-step guides", or informational resources.
+
+Please provide a highly structured Markdown response that includes:
+1. **Title:** A catchy, relevant, and short title as a level 1 heading (e.g. \`# 8 Quant Projects\`). It MUST be the very first line.
+2. **Summary:** A 1-2 sentence summary of what this carousel is about.
+3. **Key Items:** A structured list of the exact items, tips, tools, or steps shown across all slides.
+4. **Links & Resources:** Any websites, GitHub repos, tools, or specific search terms mentioned — list them clearly.
+5. **Actionable Steps:** If the carousel provides a tutorial or steps, list them chronologically.
+
+Only output the markdown. Make it beautiful, clean, and easy to read.`;
+
+        if (caption) {
+            prompt += `\n\nThe Instagram caption for this post:\n### CAPTION ###\n${caption}\n###############\n`;
+        }
+
+        const modelsToTry = ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-3.5-flash'];
+        let markdownResult = null;
+        let lastError = null;
+
+        for (const model of modelsToTry) {
+            try {
+                console.log(`[Carousel] Attempting with model: ${model}`);
+                const response = await ai.models.generateContent({
+                    model,
+                    contents: [{ role: 'user', parts: [...imageParts, { text: prompt }] }]
+                });
+                const text = response.text;
+                if (text && text.trim().length > 20) {
+                    markdownResult = text;
+                    console.log(`[Carousel] Success with ${model}`);
+                    break;
+                }
+            } catch (e) {
+                console.warn(`[Carousel] ${model} failed:`, e.message);
+                lastError = e;
+            }
+        }
+
+        if (!markdownResult) {
+            throw new Error(`All models failed for carousel. Last error: ${lastError?.message}`);
+        }
+
+        let generatedTitle = `Instagram Carousel (${shortcode})`;
+        const titleMatch = markdownResult.match(/^#\s+(.+)$/m);
+        if (titleMatch) {
+            generatedTitle = titleMatch[1].trim();
+        }
+
+        // Save to history
+        const insightId = uuidv4();
+        const newInsight = {
+            id: insightId,
+            timestamp: new Date().toISOString(),
+            originalFilename: generatedTitle,
+            markdown: markdownResult
+        };
+        const historyData = JSON.parse(await fs.readFile(historyFile, 'utf-8'));
+        historyData.unshift(newInsight);
+        await fs.writeFile(historyFile, JSON.stringify(historyData, null, 2));
+
+        res.json({ success: true, insight: newInsight });
+
+    } catch (error) {
+        console.error('Error in /api/analyze-carousel:', error);
+        res.status(500).json({ error: error.message || 'Carousel analysis failed.' });
+    }
+});
+
+
+// API Endpoint: Batch analyze multiple posts (SSE streaming)
+app.post('/api/analyze-batch', async (req, res) => {
+    console.log('--> POST /api/analyze-batch hit');
+
+    const apiKey = req.headers['x-gemini-api-key'] || '';
+    const useVertex = req.headers['x-use-vertex'] === 'true';
+    if (!apiKey && !useVertex) {
+        return res.status(401).json({ error: 'Missing Gemini API Key.' });
+    }
+
+    const { reels } = req.body;
+    if (!Array.isArray(reels) || reels.length === 0) {
+        return res.status(400).json({ error: 'No reels provided.' });
+    }
+
+    // Set up SSE headers
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const sendEvent = (data) => {
+        res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    const commonHeaders = {
+        'Content-Type': 'application/json',
+        'x-gemini-api-key': apiKey,
+        'x-gemini-model': req.headers['x-gemini-model'] || 'auto',
+        ...(useVertex ? {
+            'x-use-vertex': 'true',
+            'x-vertex-project': req.headers['x-vertex-project'] || 'smart-seat-m8ttk',
+            'x-vertex-location': req.headers['x-vertex-location'] || 'us-central1'
+        } : {})
+    };
+
+    sendEvent({ type: 'start', total: reels.length });
+
+    for (let i = 0; i < reels.length; i++) {
+        const { shortcode, caption, postType } = reels[i];
+        sendEvent({ type: 'progress', index: i, total: reels.length, shortcode });
+
+        try {
+            const isCarousel = postType && postType.toLowerCase().includes('carousel');
+            const endpoint = isCarousel ? '/api/analyze-carousel' : '/api/analyze-remote-video';
+
+            // Make internal request to existing endpoints
+            const internalRes = await fetch(`http://localhost:${port}${endpoint}`, {
+                method: 'POST',
+                headers: commonHeaders,
+                body: JSON.stringify({ shortcode, caption, videoUrl: null })
+            });
+
+            const result = await internalRes.json();
+
+            if (result.success) {
+                sendEvent({ type: 'result', index: i, shortcode, status: 'success', insight: result.insight });
+            } else {
+                sendEvent({ type: 'result', index: i, shortcode, status: 'error', error: result.error });
+            }
+        } catch (e) {
+            console.error(`[Batch] Error processing ${shortcode}:`, e.message);
+            sendEvent({ type: 'result', index: i, shortcode, status: 'error', error: e.message });
+        }
+
+        // Small delay between items to be respectful to Gemini rate limits
+        if (i < reels.length - 1) await new Promise(r => setTimeout(r, 2000));
+    }
+
+    sendEvent({ type: 'done', total: reels.length });
+    res.end();
+});
+
+
 // API Endpoint: Get History
+
 app.get('/api/history', async (req, res) => {
     try {
         const historyData = JSON.parse(await fs.readFile(historyFile, 'utf-8'));
         res.json(historyData);
     } catch (error) {
         res.status(500).json({ error: 'Failed to read history.' });
+    }
+});
+
+// API Endpoint: Delete All History Items
+app.delete('/api/history', async (req, res) => {
+    try {
+        await fs.writeFile(historyFile, JSON.stringify([]));
+        res.json({ success: true });
+    } catch (error) {
+        res.status(500).json({ error: 'Failed to clear history.' });
     }
 });
 

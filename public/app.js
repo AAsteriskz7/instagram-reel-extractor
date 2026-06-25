@@ -11,6 +11,7 @@ const dropZone = document.getElementById('dropZone');
 const fileInput = document.getElementById('fileInput');
 const processingState = document.getElementById('processingState');
 const historyGrid = document.getElementById('historyGrid');
+const clearAllBtn = document.getElementById('clearAllBtn');
 
 const insightModal = document.getElementById('insightModal');
 const closeInsightBtn = document.getElementById('closeInsight');
@@ -155,8 +156,11 @@ function renderHistory(data) {
     historyGrid.innerHTML = '';
     if (data.length === 0) {
         historyGrid.innerHTML = '<p class="subtitle">No insights yet. Upload a reel to begin.</p>';
+        if (clearAllBtn) clearAllBtn.style.display = 'none';
         return;
     }
+
+    if (clearAllBtn) clearAllBtn.style.display = 'block';
 
     data.forEach(item => {
         const card = document.createElement('div');
@@ -213,6 +217,24 @@ copyInsightBtn.addEventListener('click', () => {
         setTimeout(() => { copyInsightBtn.style.color = oldColor; }, 2000);
     });
 });
+
+// Clear All History Action
+if (clearAllBtn) {
+    clearAllBtn.addEventListener('click', async () => {
+        if (confirm("Are you sure you want to clear all insights? This action cannot be undone.")) {
+            try {
+                const res = await fetch('/api/history', { method: 'DELETE' });
+                if (res.ok) {
+                    loadHistory();
+                } else {
+                    alert("Failed to clear history.");
+                }
+            } catch (error) {
+                console.error("Failed to clear history:", error);
+            }
+        }
+    });
+}
 
 // Init
 loadHistory();

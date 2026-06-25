@@ -35,6 +35,20 @@ window.addEventListener('__gemini_cdn_url__', (e) => {
         capturedVideoUrl = url;
         // Log the FULL URL, not truncated
         console.log('[Gemini v5] 🎯 Captured CDN video URL (full):', url);
+
+        // Relay to background.js so it can resolve pending tab-based captures
+        const shortcode = getShortcode();
+        console.log('[Gemini v5] 📤 Preparing to relay to background. shortcode:', shortcode, 'pathname:', window.location.pathname);
+        if (shortcode) {
+            chrome.runtime.sendMessage({ action: 'videoCaptured', videoUrl: url, shortcode }, (response) => {
+                console.log('[Gemini v5] 📥 Background response:', response, chrome.runtime.lastError?.message);
+            });
+        } else {
+            // Suppress warning on saved pages where prefetching is normal
+            if (!window.location.pathname.includes('/saved/')) {
+                console.warn('[Gemini v5] ⚠️ Could not get shortcode from URL:', window.location.href);
+            }
+        }
     }
 });
 
@@ -48,7 +62,7 @@ window.addEventListener('__gemini_blob_url__', (e) => {
 
 // ── Helper: Extract shortcode from URL ──
 function getShortcode() {
-    const match = window.location.pathname.match(/\/(?:p|reel|tv)\/([A-Za-z0-9_-]+)/);
+    const match = window.location.pathname.match(/\/(?:p|reel|reels|tv)\/([A-Za-z0-9_-]+)/);
     return match ? match[1] : null;
 }
 
