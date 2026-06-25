@@ -49,6 +49,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             console.log(`[BG] Resolving pending capture for ${shortcode}`);
             pendingCaptures.get(shortcode).resolve(videoUrl);
         }
+        sendResponse({ success: true });
+        return false;
     }
     if (message.action === 'openAndCaptureVideo') {
         captureVideoUrl(message.shortcode)
