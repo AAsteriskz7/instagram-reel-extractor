@@ -1,0 +1,148 @@
+/* Instagram Reel Insight Extractor - Extension Injected Styles */
+
+/* Floating Extract Button */
+.gemini-floating-btn {
+    position: fixed;
+    bottom: 24px;
+    right: 24px;
+    z-index: 999999;
+    
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    
+    padding: 12px 20px;
+    background: rgba(99, 102, 241, 0.85); /* Glassy violet */
+    backdrop-filter: blur(12px) saturate(180%);
+    -webkit-backdrop-filter: blur(12px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 50px;
+    
+    color: #ffffff;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    box-shadow: 0 8px 32px 0 rgba(99, 102, 241, 0.35);
+    transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+    
+    user-select: none;
+    animation: gemini-fade-in-up 0.5s cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+.gemini-floating-btn:hover {
+    background: rgba(124, 58, 237, 0.95); /* Shifting darker violet */
+    transform: translateY(-4px) scale(1.02);
+    box-shadow: 0 12px 36px 0 rgba(124, 58, 237, 0.5);
+    border-color: rgba(255, 255, 255, 0.3);
+}
+
+.gemini-floating-btn:active {
+    transform: translateY(-1px) scale(0.98);
+}
+
+.gemini-btn-icon {
+    stroke-dasharray: 100;
+    transition: transform 0.6s ease;
+}
+
+.gemini-floating-btn:hover .gemini-btn-icon {
+    transform: rotate(15deg);
+}
+
+/* Toast Notifications */
+.gemini-toast {
+    position: fixed;
+    top: 24px;
+    right: 24px;
+    z-index: 1000000;
+    
+    display: none;
+    padding: 16px 24px;
+    border-radius: 16px;
+    
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 14px;
+    color: #ffffff;
+    box-shadow: 0 10px 40px rgba(0, 0, 0, 0.2);
+    transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+    opacity: 0;
+    transform: translateY(-20px) scale(0.9);
+}
+
+.gemini-toast.show {
+    display: block;
+    opacity: 1;
+    transform: translateY(0) scale(1);
+}
+
+/* Toast Themes */
+.gemini-toast.info {
+    background: rgba(30, 41, 59, 0.85); /* Slate glassy */
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+}
+
+.gemini-toast.success {
+    background: rgba(16, 185, 129, 0.9); /* Emerald glassy */
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    box-shadow: 0 10px 30px rgba(16, 185, 129, 0.2);
+}
+
+.gemini-toast.error {
+    background: rgba(239, 68, 68, 0.9); /* Rose glassy */
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    box-shadow: 0 10px 30px rgba(239, 68, 68, 0.2);
+}
+
+.gemini-toast-content {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+/* Spinner for loading state */
+.gemini-toast.info .gemini-toast-icon {
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    border: 2.5px solid rgba(255, 255, 255, 0.3);
+    border-radius: 50%;
+    border-top-color: #ffffff;
+    animation: gemini-spin 1s ease-in-out infinite;
+}
+
+/* Success Checkmark */
+.gemini-toast.success .gemini-toast-icon::before {
+    content: "✓";
+    font-weight: 900;
+    font-size: 16px;
+}
+
+/* Error Exclamation */
+.gemini-toast.error .gemini-toast-icon::before {
+    content: "✕";
+    font-weight: 900;
+    font-size: 16px;
+}
+
+/* Animations */
+@keyframes gemini-fade-in-up {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes gemini-spin {
+    to { transform: rotate(360deg); }
+}
