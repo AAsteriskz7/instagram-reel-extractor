@@ -194,8 +194,8 @@ input:focus, select:focus, textarea.caption-input:focus {
 }
 
 select option {
-    background: var(--bg-color);
-    color: white;
+    background: #0f172a;
+    color: #ffffff;
 }
 
 /* File Upload Zone */
