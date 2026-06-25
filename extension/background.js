@@ -230,21 +230,29 @@ async function handleAnalyzeUrl(message) {
 
 "${caption}"
 
-If this caption lists the specific tools, projects, resources, or actionable steps that the post is promoting, format them into a structured markdown report:
+CRITICAL INSTRUCTION: Does this caption explicitly contain the actual payload of the post (e.g., the specific names of tools, resources, repositories, or URLs being promoted)? 
+Many captions are just teasers (e.g. "send this to a live coder", "link in bio", "watch the video to find out"). If the caption is just a teaser/hook and DOES NOT list the specific substantive items, YOU MUST output exactly: INCOMPLETE
+
+If the caption DOES contain the actual tools/links, format them into a structured markdown report:
 1. **Title:** Catchy level 1 heading (first line).
 2. **Summary:** 1-2 sentence summary.
 3. **Key Items:** List of specific tools, repositories, etc.
 4. **Links & Repos:** List of URLs/links mentioned.
-5. **Actionable Steps:** List of steps if applicable.
-
-If the caption is just a teaser/hook and does NOT actually list the specific items (e.g. it says "watch video to find out", "link in bio" without listing them), reply with exactly: INCOMPLETE`;
+5. **Actionable Steps:** List of steps if applicable.`;
 
             try {
                 const smartPayload = { contents: [{ role: 'user', parts: [{ text: smartPrompt }] }] };
                 const smartResult = await tryGenerateWithFallback(smartPayload, config.apiKey, config.model);
                 
-                if (smartResult && !smartResult.trim().toUpperCase().includes('INCOMPLETE')) {
-                    await debugLog(`[BG] Smart pre-check successful! Caption contained all information.`);
+                const isComplete = smartResult 
+                    && !smartResult.trim().toUpperCase().includes('INCOMPLETE')
+                    && smartResult.length > 80
+                    && !smartResult.includes('Key Items:** None')
+                    && !smartResult.includes('Links & Repos:** None')
+                    && (smartResult.includes('**Key Items:**') || smartResult.includes('**Links & Repos:**'));
+                
+                if (isComplete) {
+                    await debugLog(`[BG] Smart pre-check successful! Caption contained substantive information.`);
                     let generatedTitle = `Instagram Post (${shortcode})`;
                     const titleMatch = smartResult.match(/^#\s+(.+)$/m);
                     if (titleMatch) generatedTitle = titleMatch[1].trim();
@@ -252,7 +260,7 @@ If the caption is just a teaser/hook and does NOT actually list the specific ite
                     await chrome.storage.local.set({ [`status_${shortcode}`]: { state: 'success', insightId: newInsight.id } });
                     return; // Early exit, completely bypassed media processing!
                 } else {
-                    await debugLog(`[BG] Caption pre-check returned INCOMPLETE. Proceeding to media analysis.`);
+                    await debugLog(`[BG] Caption pre-check returned INCOMPLETE or failed validation. Proceeding to media analysis.`);
                 }
             } catch (smartErr) {
                 await debugLog(`[BG] Smart pre-check failed (${smartErr.message}). Falling back to media analysis.`);
