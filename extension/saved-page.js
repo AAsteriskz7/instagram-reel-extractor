@@ -17,6 +17,11 @@
     let processingActive = false;
     let toolbar = null;
     let checkboxObserver = null;
+    let batchTotal = 0;
+    let batchDone = 0;
+    let batchSuccess = 0;
+    let batchFail = 0;
+    let globalAutoUnsaveEnabled = false;
 
     // ── Toolbar injection ──
     function injectToolbar() {
@@ -63,17 +68,36 @@
         document.getElementById('gemini-select-all-btn').addEventListener('click', selectAll);
         document.getElementById('gemini-deselect-all-btn').addEventListener('click', deselectAll);
         document.getElementById('gemini-process-btn').addEventListener('click', processSelected);
+        
+        const autoUnsaveCheckbox = document.getElementById('gemini-auto-unsave-checkbox');
+        if (autoUnsaveCheckbox) {
+            autoUnsaveCheckbox.checked = globalAutoUnsaveEnabled;
+            autoUnsaveCheckbox.addEventListener('change', (e) => {
+                globalAutoUnsaveEnabled = e.target.checked;
+            });
+        }
+
+        syncToolbarState();
     }
 
-    // ── Select Mode toggle ──
+    // ── Select Mode toggle & State Sync ──
     function toggleSelectMode() {
         selectModeActive = !selectModeActive;
+        syncToolbarState();
+    }
+
+    function syncToolbarState() {
         const btn = document.getElementById('gemini-select-mode-btn');
         const selAllBtn = document.getElementById('gemini-select-all-btn');
         const deselAllBtn = document.getElementById('gemini-deselect-all-btn');
         const countBadge = document.getElementById('gemini-selection-count');
         const processBtn = document.getElementById('gemini-process-btn');
         const autoUnsaveLabel = document.getElementById('gemini-auto-unsave-label');
+        const progressContainer = document.getElementById('gemini-batch-progress');
+        const progressFill = document.getElementById('gemini-progress-fill');
+        const progressText = document.getElementById('gemini-progress-text');
+
+        if (!btn) return;
 
         if (selectModeActive) {
             btn.classList.add('active');
@@ -96,6 +120,25 @@
             autoUnsaveLabel.style.display = 'none';
             removeCheckboxes();
         }
+
+        if (processingActive) {
+            processBtn.disabled = true;
+            progressContainer.style.display = 'block';
+            if (progressText) {
+                if (batchDone >= batchTotal && batchTotal > 0) {
+                    progressText.textContent = `✅ Done! ${batchSuccess} processed${batchFail > 0 ? `, ${batchFail} failed` : ''}`;
+                    if (progressFill) progressFill.style.width = '100%';
+                } else {
+                    progressText.textContent = `Processing ${batchDone} of ${batchTotal}…`;
+                    if (progressFill) progressFill.style.width = `${Math.round((batchDone / Math.max(batchTotal, 1)) * 100)}%`;
+                }
+            }
+        } else {
+            progressContainer.style.display = 'none';
+            if (progressFill) progressFill.style.width = '0%';
+        }
+        
+        updateCount();
     }
 
     // ── Inject checkboxes on all post thumbnails ──
@@ -250,27 +293,12 @@
         const items = getSelectedItems();
         if (items.length === 0) return;
 
-        const autoUnsaveEnabled = document.getElementById('gemini-auto-unsave-checkbox')?.checked;
-
         processingActive = true;
-        const processBtn = document.getElementById('gemini-process-btn');
-        const progressContainer = document.getElementById('gemini-batch-progress');
-        const progressFill = document.getElementById('gemini-progress-fill');
-        const progressText = document.getElementById('gemini-progress-text');
-
-        if (processBtn) processBtn.disabled = true;
-        if (progressContainer) progressContainer.style.display = 'block';
-
-        let doneCount = 0;
-        let successCount = 0;
-        let failCount = 0;
-        const total = items.length;
-
-        const updateProgress = () => {
-            if (progressText) progressText.textContent = `Processing ${doneCount} of ${total}…`;
-            if (progressFill) progressFill.style.width = `${Math.round((doneCount / total) * 100)}%`;
-        };
-        updateProgress();
+        batchTotal = items.length;
+        batchDone = 0;
+        batchSuccess = 0;
+        batchFail = 0;
+        syncToolbarState();
 
         // Keep service worker alive during long batch processing
         const keepAliveInterval = setInterval(() => {
@@ -347,19 +375,19 @@
 
                 await waitForProcessing(item.shortcode);
                 markPostDone(item.shortcode, 'success');
-                successCount++;
+                batchSuccess++;
 
-                if (autoUnsaveEnabled) {
+                if (globalAutoUnsaveEnabled) {
                     queueUnsave(item.shortcode);
                 }
             } catch (err) {
                 console.error(`[Gemini Batch] Error processing ${item.shortcode}:`, err);
                 markPostDone(item.shortcode, 'error', err.message);
-                failCount++;
+                batchFail++;
             } finally {
                 chrome.storage.local.remove([`status_${item.shortcode}`]);
-                doneCount++;
-                updateProgress();
+                batchDone++;
+                syncToolbarState();
             }
         };
 
@@ -384,19 +412,14 @@
         await unsaveQueue;
 
         // Final state
-        if (progressFill) progressFill.style.width = '100%';
-        if (progressText) {
-            progressText.textContent = `✅ Done! ${successCount} processed${failCount > 0 ? `, ${failCount} failed` : ''}`;
-        }
-
         clearInterval(keepAliveInterval);
         processingActive = false;
+        
+        // Render the "Done!" state, then reset after 8 seconds
+        syncToolbarState();
         setTimeout(() => {
-            if (progressContainer) progressContainer.style.display = 'none';
-            if (progressFill) progressFill.style.width = '0%';
+            syncToolbarState();
         }, 8000);
-
-        updateCount();
     }
 
     // ── Mark a post cell as done/errored ──
