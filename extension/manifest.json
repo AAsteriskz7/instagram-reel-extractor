@@ -13,8 +13,14 @@
     "https://*.instagram.com/*",
     "https://*.cdninstagram.com/*",
     "https://*.fbcdn.net/*",
-    "http://localhost:3000/*"
+    "https://generativelanguage.googleapis.com/*"
   ],
+  "icons": {
+    "16": "icon.png",
+    "32": "icon.png",
+    "48": "icon.png",
+    "128": "icon.png"
+  },
   "action": {
     "default_popup": "popup.html",
     "default_icon": "icon.png"

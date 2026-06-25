@@ -118,36 +118,80 @@ async function extractAndSend() {
     sendToBackend(null, scrapeCaption(), shortcode);
 }
 
-function sendToBackend(videoUrl, caption, shortcode) {
-    chrome.runtime.sendMessage({
-        action: 'analyzeUrl',
-        videoUrl: videoUrl,       // may be null — backend handles it via shortcode
-        caption: caption,
-        shortcode: shortcode
-    }, handleResponse);
+// ── Helper: Wait for background task to update status in storage ──
+function waitForProcessing(shortcode) {
+    return new Promise((resolve, reject) => {
+        // First check if it's already done
+        chrome.storage.local.get([`status_${shortcode}`], (res) => {
+            const status = res[`status_${shortcode}`];
+            if (status) {
+                if (status.state === 'success') { resolve(status); return; }
+                if (status.state === 'error') { reject(new Error(status.error)); return; }
+            }
+            
+            // Otherwise, listen for changes
+            const listener = (changes, namespace) => {
+                if (namespace === 'local' && changes[`status_${shortcode}`]) {
+                    const newStatus = changes[`status_${shortcode}`].newValue;
+                    if (newStatus) {
+                        if (newStatus.state === 'success') {
+                            chrome.storage.onChanged.removeListener(listener);
+                            resolve(newStatus);
+                        } else if (newStatus.state === 'error') {
+                            chrome.storage.onChanged.removeListener(listener);
+                            reject(new Error(newStatus.error));
+                        }
+                    }
+                }
+            };
+            chrome.storage.onChanged.addListener(listener);
+        });
+    });
 }
 
-function handleResponse(response) {
-    if (chrome.runtime.lastError) {
-        showToast('Extension error: ' + chrome.runtime.lastError.message, 'error', 6000);
-        return;
-    }
-    if (!response) {
-        showToast('❌ No response. Is your server running? npm start at localhost:3000', 'error', 7000);
-        return;
-    }
-    if (response.success) {
-        showToast('✅ Done! Check your dashboard at localhost:3000', 'success', 6000);
-    } else {
-        showToast('❌ ' + (response.error || 'Unknown error'), 'error', 8000);
+async function sendToBackend(videoUrl, caption, shortcode) {
+    try {
+        const response = await new Promise((resolve) => {
+            chrome.runtime.sendMessage({
+                action: 'analyzeUrl',
+                videoUrl: videoUrl,       // may be null — backend handles it via shortcode
+                caption: caption,
+                shortcode: shortcode
+            }, (res) => {
+                if (chrome.runtime.lastError) {
+                    resolve({ success: false, error: chrome.runtime.lastError.message });
+                } else {
+                    resolve(res);
+                }
+            });
+        });
+
+        if (!response || !response.success) {
+            showToast('❌ Analysis failed to start: ' + (response?.error || 'Unknown error'), 'error', 8000);
+            return;
+        }
+
+        showToast('📡 Analysis started! Processing in background...', 'info', 4000);
+
+        // Wait for final completion
+        await waitForProcessing(shortcode);
+        showToast('✅ Done! Check your extension Insights Dashboard', 'success', 6000);
+    } catch (err) {
+        showToast('❌ ' + (err.message || 'Error processing URL'), 'error', 8000);
+    } finally {
+        // Clean up status key from local storage
+        chrome.storage.local.remove([`status_${shortcode}`]);
     }
 }
 
 // ── Button injection ──
 function injectButton() {
-    if (document.getElementById('gemini-extractor-btn')) return;
+    if (window.location.pathname.includes('/saved/')) { removeButton(); return; }
+    
     const shortcode = getShortcode();
     if (!shortcode) { removeButton(); return; }
+
+    if (document.getElementById('gemini-extractor-btn')) return;
 
     floatingButton = document.createElement('button');
     floatingButton.id = 'gemini-extractor-btn';
@@ -176,6 +220,20 @@ function startObserver() {
     });
     observer.observe(document.body, { childList: true, subtree: true });
     injectButton();
+
+    // Periodically watch navigation changes to prevent race conditions on SPA URL changes
+    let lastPath = window.location.pathname;
+    setInterval(() => {
+        if (window.location.pathname !== lastPath) {
+            lastPath = window.location.pathname;
+            injectButton();
+            if (!getShortcode()) {
+                capturedVideoUrl = null;
+                capturedBlobUrl = null;
+            }
+        }
+    }, 200);
+
     console.log('[Gemini Extractor v5] DOM ready. Observer started.');
 }
 

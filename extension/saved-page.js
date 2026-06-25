@@ -160,7 +160,7 @@
 
         // Clicking the cell wrapper should toggle the checkbox without navigating
         link.addEventListener('click', (e) => {
-            if (selectModeActive) {
+            if (selectModeActive && e.isTrusted) {
                 e.preventDefault();
                 e.stopPropagation();
                 checkbox.checked = !checkbox.checked;
@@ -213,6 +213,37 @@
         }));
     }
 
+    // ── Helper: Wait for background task to update status in storage ──
+    function waitForProcessing(shortcode) {
+        return new Promise((resolve, reject) => {
+            // First check if it's already done
+            chrome.storage.local.get([`status_${shortcode}`], (res) => {
+                const status = res[`status_${shortcode}`];
+                if (status) {
+                    if (status.state === 'success') { resolve(status); return; }
+                    if (status.state === 'error') { reject(new Error(status.error)); return; }
+                }
+                
+                // Otherwise, listen for changes
+                const listener = (changes, namespace) => {
+                    if (namespace === 'local' && changes[`status_${shortcode}`]) {
+                        const newStatus = changes[`status_${shortcode}`].newValue;
+                        if (newStatus) {
+                            if (newStatus.state === 'success') {
+                                chrome.storage.onChanged.removeListener(listener);
+                                resolve(newStatus);
+                            } else if (newStatus.state === 'error') {
+                                chrome.storage.onChanged.removeListener(listener);
+                                reject(new Error(newStatus.error));
+                            }
+                        }
+                    }
+                };
+                chrome.storage.onChanged.addListener(listener);
+            });
+        });
+    }
+
     // ── Main: Process Selected ──
     async function processSelected() {
         if (processingActive) return;
@@ -228,12 +259,19 @@
         const progressText = document.getElementById('gemini-progress-text');
 
         if (processBtn) processBtn.disabled = true;
-        if (progressContainer) progressContainer.style.display = '';
+        if (progressContainer) progressContainer.style.display = 'block';
 
         let doneCount = 0;
         let successCount = 0;
         let failCount = 0;
         const total = items.length;
+
+        // Keep service worker alive during long batch processing (Gemini API can take >30s)
+        const keepAliveInterval = setInterval(() => {
+            chrome.runtime.sendMessage({ action: 'ping' }, () => {
+                if (chrome.runtime.lastError) { /* ignore */ }
+            });
+        }, 10000);
 
         for (const item of items) {
             if (progressText) progressText.textContent = `Processing ${doneCount + 1} of ${total}…`;
@@ -290,29 +328,22 @@
             }
 
             try {
-                const processSuccess = await new Promise((resolve, reject) => {
-                    chrome.runtime.sendMessage({
-                        action: 'analyzeUrl',
-                        videoUrl: videoUrl,
-                        imageUrls: imageUrls,
-                        caption: item.caption,
-                        shortcode: item.shortcode,
-                        postType: item.postType
-                    }, (response) => {
-                        if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
-                        if (response && response.success) {
-                            markPostDone(item.shortcode, 'success');
-                            successCount++;
-                            resolve(true); // Return true for success
-                        } else {
-                            markPostDone(item.shortcode, 'error');
-                            failCount++;
-                            resolve(false); // Return false for failure
-                        }
-                    });
+                chrome.runtime.sendMessage({
+                    action: 'analyzeUrl',
+                    videoUrl: videoUrl,
+                    imageUrls: imageUrls,
+                    caption: item.caption,
+                    shortcode: item.shortcode,
+                    postType: item.postType
                 });
 
-                if (processSuccess && autoUnsaveEnabled) {
+                // Wait for the background task to update the storage status
+                await waitForProcessing(item.shortcode);
+
+                markPostDone(item.shortcode, 'success');
+                successCount++;
+
+                if (autoUnsaveEnabled) {
                     try {
                         console.log(`[Gemini Saved] Auto-unsaving ${item.shortcode}...`);
                         await unsavePost(item.shortcode);
@@ -322,8 +353,11 @@
                 }
             } catch (err) {
                 console.error(`[Gemini Batch] Error processing ${item.shortcode}:`, err);
-                markPostDone(item.shortcode, 'error');
+                markPostDone(item.shortcode, 'error', err.message);
                 failCount++;
+            } finally {
+                // Clean up status key from local storage
+                chrome.storage.local.remove([`status_${item.shortcode}`]);
             }
 
             doneCount++;
@@ -335,6 +369,7 @@
             progressText.textContent = `✅ Done! ${successCount} processed${failCount > 0 ? `, ${failCount} failed` : ''} — check dashboard`;
         }
 
+        clearInterval(keepAliveInterval);
         processingActive = false;
         setTimeout(() => {
             if (progressContainer) progressContainer.style.display = 'none';
@@ -345,7 +380,7 @@
     }
 
     // ── Mark a post cell as done/errored ──
-    function markPostDone(shortcode, status) {
+    function markPostDone(shortcode, status, errorMsg) {
         const cell = document.querySelector(`.gemini-post-cell[data-shortcode="${shortcode}"]`);
         if (!cell) return;
         cell.classList.remove('gemini-post-selected');
@@ -361,6 +396,9 @@
         const overlay = document.createElement('div');
         overlay.className = 'gemini-post-status-overlay';
         overlay.textContent = status === 'success' ? '✅' : '❌';
+        if (status === 'error' && errorMsg) {
+            overlay.title = errorMsg; // Show error on hover
+        }
         cell.querySelector('a')?.appendChild(overlay);
     }
 
