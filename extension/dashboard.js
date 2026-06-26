@@ -13,6 +13,7 @@ const fileInput = document.getElementById('fileInput');
 const processingState = document.getElementById('processingState');
 const historyGrid = document.getElementById('historyGrid');
 const clearAllBtn = document.getElementById('clearAllBtn');
+const copyAllBtn = document.getElementById('copyAllBtn');
 
 const insightModal = document.getElementById('insightModal');
 const closeInsightBtn = document.getElementById('closeInsight');
@@ -157,10 +158,12 @@ function renderHistory(data) {
     if (data.length === 0) {
         historyGrid.innerHTML = '<p class="subtitle">No insights yet. Upload a reel to begin.</p>';
         if (clearAllBtn) clearAllBtn.style.display = 'none';
+        if (copyAllBtn) copyAllBtn.style.display = 'none';
         return;
     }
 
     if (clearAllBtn) clearAllBtn.style.display = 'block';
+    if (copyAllBtn) copyAllBtn.style.display = 'block';
 
     data.forEach(item => {
         const card = document.createElement('div');
@@ -170,6 +173,9 @@ function renderHistory(data) {
             <div class="date">${new Date(item.timestamp).toLocaleString()}</div>
             <div class="preview">${item.markdown}</div>
             <div class="card-actions">
+                <button class="btn btn-icon copy-card-btn" title="Copy Insight">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path></svg>
+                </button>
                 <button class="btn btn-icon delete-btn" title="Delete">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18"></path><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path></svg>
                 </button>
@@ -177,9 +183,24 @@ function renderHistory(data) {
         `;
 
         card.addEventListener('click', (e) => {
-            if (!e.target.closest('.delete-btn')) {
+            if (!e.target.closest('.delete-btn') && !e.target.closest('.copy-card-btn')) {
                 openInsightModal(item);
             }
+        });
+
+        const copyCardBtn = card.querySelector('.copy-card-btn');
+        copyCardBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            navigator.clipboard.writeText(item.markdown).then(() => {
+                const svg = copyCardBtn.querySelector('svg');
+                const oldHTML = svg.innerHTML;
+                svg.innerHTML = '<polyline points="20 6 9 17 4 12"></polyline>';
+                copyCardBtn.style.color = '#10b981';
+                setTimeout(() => {
+                    svg.innerHTML = oldHTML;
+                    copyCardBtn.style.color = '';
+                }, 2000);
+            });
         });
 
         const deleteBtn = card.querySelector('.delete-btn');
@@ -228,6 +249,30 @@ if (clearAllBtn) {
                 loadHistory();
             });
         }
+    });
+}
+
+// Copy All History Action
+if (copyAllBtn) {
+    copyAllBtn.addEventListener('click', () => {
+        chrome.storage.local.get(['history'], (result) => {
+            const history = result.history || [];
+            if (history.length === 0) return;
+            const combinedText = history.map(item => `### ${item.originalFilename}\n\n${item.markdown}`).join('\n\n---\n\n');
+            navigator.clipboard.writeText(combinedText).then(() => {
+                const oldText = copyAllBtn.textContent;
+                copyAllBtn.textContent = 'Copied!';
+                copyAllBtn.style.color = '#10b981';
+                copyAllBtn.style.background = 'rgba(16, 185, 129, 0.1)';
+                copyAllBtn.style.borderColor = 'rgba(16, 185, 129, 0.2)';
+                setTimeout(() => {
+                    copyAllBtn.textContent = oldText;
+                    copyAllBtn.style.color = '';
+                    copyAllBtn.style.background = '';
+                    copyAllBtn.style.borderColor = '';
+                }, 2000);
+            });
+        });
     });
 }
 

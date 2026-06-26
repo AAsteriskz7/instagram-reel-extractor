@@ -64,7 +64,10 @@
                 <div class="glass-card history-card">
                     <div class="history-header" style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem;">
                         <h2 style="margin: 0;">My Insights</h2>
-                        <button id="clearAllBtn" class="btn btn-secondary btn-small" style="font-size: 0.85rem; padding: 6px 12px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: #ef4444; display: none;">Clear All</button>
+                        <div style="display: flex; gap: 8px;">
+                            <button id="copyAllBtn" class="btn btn-secondary btn-small" style="font-size: 0.85rem; padding: 6px 12px; background: rgba(59, 130, 246, 0.1); border: 1px solid rgba(59, 130, 246, 0.2); color: #60a5fa; display: none;">Copy All</button>
+                            <button id="clearAllBtn" class="btn btn-secondary btn-small" style="font-size: 0.85rem; padding: 6px 12px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.2); color: #ef4444; display: none;">Clear All</button>
+                        </div>
                     </div>
                     <div id="historyGrid" class="history-grid">
                         <!-- History items injected here -->
